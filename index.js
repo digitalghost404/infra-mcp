@@ -22,6 +22,32 @@ const TIMEOUT_SYSTEM = 10_000;
 const TIMEOUT_DOCKER = 15_000;
 const TIMEOUT_LOGS = 30_000;
 
+// ─── Docker availability cache ──────────────────────────────────────────────
+let dockerDownSince = 0;      // timestamp (ms) when Docker was last found unavailable
+const DOCKER_CACHE_TTL = 30_000; // 30 seconds
+
+/** Cache a Docker failure so subsequent calls can bail out fast. */
+function markDockerDown() {
+  dockerDownSince = Date.now();
+}
+
+/** Clear the cached failure (e.g. after a successful call). */
+function markDockerUp() {
+  dockerDownSince = 0;
+}
+
+/**
+ * If Docker was recently detected as down, throw immediately instead of
+ * waiting for curl to timeout.  Returns silently if Docker might be up.
+ */
+function assertDockerMaybeUp() {
+  if (dockerDownSince > 0 && Date.now() - dockerDownSince < DOCKER_CACHE_TTL) {
+    throw new Error(
+      `Docker socket not available at ${DOCKER_SOCKET} (cached — last checked ${Math.round((Date.now() - dockerDownSince) / 1000)}s ago). Is Docker running?`
+    );
+  }
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function humanBytes(kb) {
@@ -68,10 +94,12 @@ async function execWithTimeout(cmd, args, timeoutMs) {
 
 /** Docker API via curl --unix-socket */
 async function dockerApi(method, path, timeoutMs = TIMEOUT_DOCKER) {
+  assertDockerMaybeUp();
   const url = `http://localhost/${DOCKER_API}${path}`;
   const args = ["--unix-socket", DOCKER_SOCKET, "-s", "-X", method, url];
   try {
     const { stdout } = await execWithTimeout("curl", args, timeoutMs);
+    markDockerUp();
     return JSON.parse(stdout);
   } catch (err) {
     if (err.code === "ENOENT") throw new Error("curl not found on system");
@@ -79,6 +107,7 @@ async function dockerApi(method, path, timeoutMs = TIMEOUT_DOCKER) {
     try {
       await readFile(DOCKER_SOCKET);
     } catch {
+      markDockerDown();
       throw new Error(`Docker socket not found at ${DOCKER_SOCKET}. Is Docker running?`);
     }
     throw err;
@@ -86,15 +115,18 @@ async function dockerApi(method, path, timeoutMs = TIMEOUT_DOCKER) {
 }
 
 async function dockerApiRaw(method, path, timeoutMs = TIMEOUT_DOCKER) {
+  assertDockerMaybeUp();
   const url = `http://localhost/${DOCKER_API}${path}`;
   const args = ["--unix-socket", DOCKER_SOCKET, "-s", "-X", method, url];
   try {
     const { stdout } = await execWithTimeout("curl", args, timeoutMs);
+    markDockerUp();
     return stdout;
   } catch (err) {
     try {
       await readFile(DOCKER_SOCKET);
     } catch {
+      markDockerDown();
       throw new Error(`Docker socket not found at ${DOCKER_SOCKET}. Is Docker running?`);
     }
     throw err;
@@ -102,6 +134,7 @@ async function dockerApiRaw(method, path, timeoutMs = TIMEOUT_DOCKER) {
 }
 
 async function dockerApiPost(path, timeoutMs = TIMEOUT_DOCKER) {
+  assertDockerMaybeUp();
   const url = `http://localhost/${DOCKER_API}${path}`;
   const args = [
     "--unix-socket", DOCKER_SOCKET, "-s",
@@ -111,6 +144,7 @@ async function dockerApiPost(path, timeoutMs = TIMEOUT_DOCKER) {
   ];
   try {
     const { stdout } = await execWithTimeout("curl", args, timeoutMs);
+    markDockerUp();
     const lines = stdout.trimEnd().split("\n");
     const statusCode = parseInt(lines.pop(), 10);
     const body = lines.join("\n");
@@ -119,6 +153,7 @@ async function dockerApiPost(path, timeoutMs = TIMEOUT_DOCKER) {
     try {
       await readFile(DOCKER_SOCKET);
     } catch {
+      markDockerDown();
       throw new Error(`Docker socket not found at ${DOCKER_SOCKET}. Is Docker running?`);
     }
     throw err;
