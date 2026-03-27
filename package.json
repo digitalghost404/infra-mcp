@@ -1,0 +1,24 @@
+{
+  "name": "infra-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for Docker monitoring and system monitoring — gives Claude visibility into machine state",
+  "main": "index.js",
+  "type": "module",
+  "bin": {
+    "infra-mcp": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test.js"
+  },
+  "keywords": ["mcp", "docker", "system-monitor", "infrastructure"],
+  "author": "digitalghost404",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "zod": "^4.3.6"
+  }
+}
