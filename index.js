@@ -166,6 +166,8 @@ const server = new McpServer({
   name: "infra-mcp",
   version: "1.0.0",
 });
+server.setResourceRequestHandlers();
+server.setPromptRequestHandlers();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // SYSTEM TOOLS
