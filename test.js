@@ -120,6 +120,10 @@ function getText(res) {
   return res?.result?.content?.[0]?.text ?? "";
 }
 
+function parseJsonText(res) {
+  return JSON.parse(getText(res));
+}
+
 function isError(res) {
   return !!(res?.error || res?.result?.isError);
 }
@@ -176,19 +180,21 @@ try {
   const res = await client.call("tools/list");
   const tools = res?.result?.tools ?? [];
   const toolNames = tools.map((t) => t.name).sort();
-  assert(tools.length === 15, "tools/list: has 15 tools", `found ${tools.length}: ${toolNames.join(", ")}`);
+  assert(tools.length === 21, "tools/list: has 21 tools", `found ${tools.length}: ${toolNames.join(", ")}`);
 
   const expected = [
     "system_overview", "gpu_status", "gpu_processes", "disk_usage",
     "io_pressure", "top_processes", "service_status", "memory_detail",
     "list_containers", "inspect_container", "container_logs",
     "start_container", "stop_container", "restart_container", "compose_status",
+    "list_images", "list_volumes", "list_networks",
+    "container_health", "docker_stats", "prune_system",
   ].sort();
 
   const missing = expected.filter((n) => !toolNames.includes(n));
   assert(missing.length === 0, "tools/list: all expected tools registered", missing.length > 0 ? `missing: ${missing.join(", ")}` : "all present");
 } catch (e) {
-  assert(false, "tools/list: has 15 tools", e.message);
+  assert(false, "tools/list: has 21 tools", e.message);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -206,6 +212,24 @@ try {
   assert(!isError(res), "system_overview: no error", "");
 } catch (e) {
   assert(false, "system_overview: contains Load avg, Memory, Uptime", e.message);
+}
+
+console.log(Y("\nsystem_overview (json)"));
+try {
+  const res = await client.tool("system_overview", { format: "json" });
+  const data = parseJsonText(res);
+  assert(
+    Array.isArray(data.loadavg) && data.loadavg.length === 3,
+    "system_overview json: returns 3 load averages",
+    JSON.stringify(data.loadavg)
+  );
+  assert(
+    typeof data.memory?.total_kb === "number" && typeof data.swap?.total_kb === "number" && typeof data.uptime_seconds === "number",
+    "system_overview json: returns memory, swap, and uptime fields",
+    JSON.stringify({ memory: data.memory, swap: data.swap, uptime_seconds: data.uptime_seconds }).slice(0, 120)
+  );
+} catch (e) {
+  assert(false, "system_overview json: returns structured payload", e.message);
 }
 
 console.log(Y("\nmemory_detail"));
@@ -312,6 +336,24 @@ if (gpu) {
   }
 }
 
+console.log(Y("\ngpu_status (json)"));
+try {
+  const res = await client.tool("gpu_status", { format: "json" });
+  const data = parseJsonText(res);
+  assert(Array.isArray(data), "gpu_status json: returns an array", typeof data);
+  if (gpu && data.length > 0) {
+    assert(
+      typeof data[0].name === "string" && Object.hasOwn(data[0], "temp_c") && Object.hasOwn(data[0], "util_pct"),
+      "gpu_status json: array entries contain expected keys",
+      JSON.stringify(data[0])
+    );
+  } else {
+    assert(data.length === 0, "gpu_status json: no GPU returns empty array", JSON.stringify(data));
+  }
+} catch (e) {
+  assert(false, "gpu_status json: returns structured payload", e.message);
+}
+
 console.log(Y("\ngpu_processes"));
 if (gpu) {
   try {
@@ -357,6 +399,24 @@ if (docker) {
     assert(false, "list_containers: contains header and total count", e.message);
   }
 
+  console.log(Y("\nlist_containers (json)"));
+  try {
+    const res = await client.tool("list_containers", { all: true, format: "json" });
+    const data = parseJsonText(res);
+    assert(Array.isArray(data), "list_containers json: returns an array", typeof data);
+    if (data.length > 0) {
+      assert(
+        typeof data[0].id === "string" && typeof data[0].name === "string" && typeof data[0].status === "string",
+        "list_containers json: array entries contain expected keys",
+        JSON.stringify(data[0])
+      );
+    } else {
+      assert(true, "list_containers json: supports empty array response", "[]");
+    }
+  } catch (e) {
+    assert(false, "list_containers json: returns structured payload", e.message);
+  }
+
   console.log(Y("\ncompose_status"));
   try {
     const res = await client.tool("compose_status");
@@ -369,6 +429,61 @@ if (docker) {
   } catch (e) {
     assert(false, "compose_status: returns compose projects", e.message);
   }
+
+  console.log(Y("\nlist_images (json)"));
+  try {
+    const res = await client.tool("list_images", { format: "json" });
+    const data = parseJsonText(res);
+    assert(Array.isArray(data), "list_images json: returns an array", typeof data);
+    if (data.length > 0) {
+      assert(
+        typeof data[0].id === "string" && Array.isArray(data[0].tags),
+        "list_images json: array entries contain expected keys",
+        JSON.stringify(data[0])
+      );
+    } else {
+      assert(true, "list_images json: supports empty array response", "[]");
+    }
+  } catch (e) {
+    assert(false, "list_images json: returns structured payload", e.message);
+  }
+
+  console.log(Y("\nlist_volumes (json)"));
+  try {
+    const res = await client.tool("list_volumes", { format: "json" });
+    const data = parseJsonText(res);
+    assert(Array.isArray(data?.volumes), "list_volumes json: returns volumes array", JSON.stringify(data));
+    assert(Array.isArray(data?.warnings), "list_volumes json: returns warnings array", JSON.stringify(data));
+    if (data.volumes.length > 0) {
+      assert(
+        typeof data.volumes[0].name === "string" && typeof data.volumes[0].driver === "string",
+        "list_volumes json: array entries contain expected keys",
+        JSON.stringify(data.volumes[0])
+      );
+    } else {
+      assert(true, "list_volumes json: supports empty volume list", "[]");
+    }
+  } catch (e) {
+    assert(false, "list_volumes json: returns structured payload", e.message);
+  }
+
+  console.log(Y("\ncontainer_health (json)"));
+  try {
+    const res = await client.tool("container_health", { format: "json" }, 45000);
+    const data = parseJsonText(res);
+    assert(Array.isArray(data), "container_health json: returns an array", typeof data);
+    if (data.length > 0) {
+      assert(
+        typeof data[0].name === "string" && typeof data[0].health_status === "string",
+        "container_health json: array entries contain expected keys",
+        JSON.stringify(data[0])
+      );
+    } else {
+      assert(true, "container_health json: supports empty array response", "[]");
+    }
+  } catch (e) {
+    assert(false, "container_health json: returns structured payload", e.message);
+  }
 } else {
   console.log(Y("\nDocker tools"));
   skip("list_containers", "Docker socket not available");
@@ -378,7 +493,12 @@ if (docker) {
   skip("start_container", "Docker socket not available");
   skip("stop_container", "Docker socket not available");
   skip("restart_container", "Docker socket not available");
-
+  skip("list_images", "Docker socket not available");
+  skip("list_volumes", "Docker socket not available");
+  skip("list_networks", "Docker socket not available");
+  skip("container_health", "Docker socket not available");
+  skip("docker_stats", "Docker socket not available");
+  skip("prune_system", "Docker socket not available");
   // Verify docker tools return error, not crash
   console.log(Y("\nlist_containers (no docker)"));
   try {
